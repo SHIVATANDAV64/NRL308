@@ -173,16 +173,12 @@ enum class LineRef : uint8_t {
  */
 struct HexaLineArrayConfig {
     /// Mux select pins, in order S0, S1, S2. Channel index is binary S2:S1:S0.
-    uint8_t selPins[3] = { 18, 15, 16 };
+    // Default matching Arc-8 on DIGITAL_PORT_1 (D5=GPIO2) and DIGITAL_PORT_2 (D6=GPIO15, D7=GPIO16)
+    uint8_t selPins[3] = { 2, 15, 16 };
 
     /// Mux common output -> an ADC-capable pin.
-    ///
-    /// On ESP32-S3, ADC1 is GPIO1..10 and ADC2 is GPIO11..20. ADC2 is shared
-    /// with the WiFi radio, and the NRL engine keeps ESP-NOW up permanently,
-    /// so an ADC2 pin here can read badly or not at all. If readings look
-    /// dead or noisy with the robot connected, move this to GPIO1 (DIGITAL_1,
-    /// ADC1_CH0) and rewire.
-    uint8_t sigPin = 17;
+    // Default matching Arc-8 on DIGITAL_PORT_1 (D4=GPIO1 / ADC1_CH0)
+    uint8_t sigPin = 1;
 
     /// Settle time after switching the mux before sampling, microseconds.
     uint8_t settleUs = 15;
@@ -201,11 +197,11 @@ struct HexaLineArrayConfig {
     /// A calibrated channel whose max-min span is below this is treated as
     /// dead (forced to 0). Catches broken emitters, and a capture step that
     /// was done over the wrong surface.
-    uint16_t minSpan = 300;
+    uint16_t minSpan = 100;
 
     /// Span below this is usable but poor — worth flagging on screen so a
     /// marginal channel is visible before it causes a mystery on the track.
-    uint16_t weakSpan = 800;
+    uint16_t weakSpan = 200;
 
     /// How long the line may be missing before lost() latches true and
     /// position() returns -1. Below this the array reports an extreme

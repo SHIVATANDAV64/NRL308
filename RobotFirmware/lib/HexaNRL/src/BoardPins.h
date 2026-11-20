@@ -69,27 +69,13 @@ constexpr int MOTOR_3_PWM = DIGITAL_2;
 constexpr int MOTOR_4_DIR = DIGITAL_3;
 constexpr int MOTOR_4_PWM = DIGITAL_4;
 
-// 8-channel IR line array, read through a 74HC4051-class 8:1 analog mux.
-// Three select lines pick a channel (index = binary S2:S1:S0), one ADC pin
-// reads the mux common. Used by HexaLineArray / hexaLineConfig().
-//
-//   CAUTION 1 — pin reuse: LINE_SEL_1/LINE_SEL_2 are the SAME pins as
-//   MOTOR_4_DIR/MOTOR_4_PWM (DIGITAL_3/DIGITAL_4) above, and LINE_SIG/LINE_SEL_0
-//   are the SAME pins as UART1_TX/UART1_RX below. Motor 4 is bench-only, and
-//   UART1 is only driven by the factory QC loopback test — so there is no
-//   conflict in normal use, but never wire both at once, and unplug the array
-//   for QC.
-//
-//   CAUTION 2 — ADC bank: on ESP32-S3, ADC1 is GPIO1-10 and ADC2 is
-//   GPIO11-20. ADC2 is shared with the WiFi radio, and the NRL engine keeps
-//   ESP-NOW up permanently. LINE_SIG below is GPIO17 = ADC2_CH6. If readings
-//   come back dead or noisy with the robot connected, move LINE_SIG to
-//   DIGITAL_1 (GPIO1 = ADC1_CH0) and rewire — HexaLineArrayConfig::sigPin
-//   makes that a one-line change.
-constexpr int LINE_SEL_0 = 18;  // == UART1_RX (QC loopback only)
-constexpr int LINE_SEL_1 = 15;  // == DIGITAL_3 == MOTOR_4_DIR (bench only)
-constexpr int LINE_SEL_2 = 16;  // == DIGITAL_4 == MOTOR_4_PWM (bench only)
-constexpr int LINE_SIG   = 17;  // == UART1_TX; mux common -> ADC2_CH6 (see CAUTION 2)
+// 8-channel IR line array (Arc-8) wired to DIGITAL_PORT_1 (J21) and DIGITAL_PORT_2 (J22):
+//   DIGITAL_PORT_1: 3.3V, GND, D4 (Sig -> GPIO 1 / ADC1_CH0), D5 (S0 -> GPIO 2)
+//   DIGITAL_PORT_2: D6 (S1 -> GPIO 15), D7 (S2 -> GPIO 16)
+constexpr int LINE_SEL_0 = DIGITAL_2;  // GPIO 2  (D5, S0)
+constexpr int LINE_SEL_1 = DIGITAL_3;  // GPIO 15 (D6, S1)
+constexpr int LINE_SEL_2 = DIGITAL_4;  // GPIO 16 (D7, S2)
+constexpr int LINE_SIG   = DIGITAL_1;  // GPIO 1  (D4, Sig -> ADC1_CH0)
 
 // External digital-I/O headers as silkscreened D1–D3 (same pins as DIGITAL_5–7).
 // Use these names when driving the external DIO connectors (e.g. "IO Test").

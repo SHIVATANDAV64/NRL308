@@ -77,6 +77,22 @@ static LineTuning team308LineTuning() {
 
 static LineActions lineActions { drive, line, team308LineTuning() };
 
+// Tuned motion parameters for Team 308 Dead-Reckoning CAD Navigation
+static DriveTuning team308DriveTuning() {
+    DriveTuning t;
+    t.driveSpeed       = 220;    // smooth controlled forward drive
+    t.turnSpeed        = 200;    // smooth controlled gyro turn
+    t.turnMinSpeed     = 80;
+    t.turnSlowdownDeg  = 50.0f;
+    t.turnToleranceDeg = 2.5f;
+    t.turnBrakeMs      = 180;
+    t.msPerInch        = 18.0f;  // ~18 ms per inch
+    t.distFuseImuWeight= 0.50f;  // Balanced blend of IMU + time
+    return t;
+}
+
+static DriveActions driveActions { drive, team308DriveTuning() };
+
 
 // ============================================================
 // PART 2: CALIBRATED SERVO ANGLES (Team 308)
@@ -368,8 +384,234 @@ public:
 
 
 // ============================================================
+// ROUTINE 4: DIRECT LINE FOLLOWER & PARK (35 Points)
+// Simple, rock-solid proportional line follower that drives
+// straight out of the Start Box, follows the 25 mm black tape
+// around the arena perimeter (ignoring all spur branches),
+// smoothly rounds all 4 left corners, and brakes when it enters
+// the 500x500 mm black Park Zone.
+// Completely bypasses the LineActions state machine.
+// ============================================================
+
+class AutoDirectLineFollow : public NRLOpMode {
+private:
+    enum class State : uint8_t {
+        EXIT_BOX,      // Drive straight forward out of Start Box
+        FOLLOW_LINE,   // Follow perimeter 25 mm tape
+        ENTER_PARK,    // Drive into Park Zone
+        PARKED         // Stopped & done
+    };
+
+    State _state = State::EXIT_BOX;
+    uint32_t _stateStart = 0;
+    uint32_t _startTime = 0;
+    int _lastSeenSide = -1; // Default to turning left at corners
+    uint32_t _parkDetectStart = 0;
+
+public:
+    void init() override {
+        leftMotor.begin();
+        rightMotor.begin();
+        armServo.begin();
+        gripperServo.begin();
+        servo3.begin();
+        line.begin();
+        line.autoFixCalibration();
+
+        armServo.setPosition(ARM_UP_ANGLE);
+        gripperServo.setPosition(GRIPPER_CLOSE_ANGLE);
+        servo3.setPosition(SERVO3_CLOSE_ANGLE);
+    }
+
+    void start() override {
+        _state = State::EXIT_BOX;
+        _stateStart = millis();
+        _startTime = millis();
+        _lastSeenSide = -1;
+        _parkDetectStart = 0;
+    }
+
+    void loop() override {
+        uint32_t now = millis();
+        uint32_t elapsed = now - _startTime;
+        int count = line.count();
+        int pos = line.position();
+
+        switch (_state) {
+        case State::EXIT_BOX:
+            // Drive straight forward at 0.30f for 750 ms to exit Start Box onto spur
+            drive.drive(0.30f, 0.0f);
+            if (now - _stateStart >= 750) {
+                _state = State::FOLLOW_LINE;
+                _stateStart = now;
+            }
+            break;
+
+        case State::FOLLOW_LINE: {
+            // Check for Park Zone (500x500 mm solid black)
+            // Only after 8 seconds of driving to prevent false trigger on Start Box
+            if (elapsed > 8000 && count >= 5) {
+                if (_parkDetectStart == 0) {
+                    _parkDetectStart = now;
+                } else if (now - _parkDetectStart > 180) { // Confirmed black for 180 ms
+                    _state = State::ENTER_PARK;
+                    _stateStart = now;
+                    break;
+                }
+            } else {
+                _parkDetectStart = 0;
+            }
+
+            // Proportional line following
+            if (count > 0 && pos >= 0) {
+                float err = (float)(pos - 3500); // -3500 (left) to +3500 (right)
+                float steer = (err / 3500.0f) * 0.55f;
+                drive.drive(0.32f, steer);
+
+                if (err < -600.0f) _lastSeenSide = -1;
+                else if (err > 600.0f) _lastSeenSide = 1;
+            } else {
+                // Line momentarily lost at sharp 90-deg left corner
+                // Pivot gently left to reacquire the line
+                drive.drive(0.12f, _lastSeenSide * 0.45f);
+            }
+            break;
+        }
+
+        case State::ENTER_PARK:
+            // Drive forward 350 ms at 0.25f to center inside Park Zone
+            drive.drive(0.25f, 0.0f);
+            if (now - _stateStart >= 350) {
+                drive.stop();
+                _state = State::PARKED;
+            }
+            break;
+
+        case State::PARKED:
+            drive.stop();
+            break;
+        }
+
+        const char* stName = (_state == State::EXIT_BOX)    ? "EXITING BOX" :
+                             (_state == State::FOLLOW_LINE) ? "FOLLOWING LINE" :
+                             (_state == State::ENTER_PARK)  ? "ENTERING PARK" : "PARKED (35P)";
+        telemetry.addData("Mission", "DIRECT LINE (35P)");
+        telemetry.addData("State", stName);
+        telemetry.addData("Line Pos", line.position());
+        telemetry.addData("Count", count);
+        telemetry.addData("Time (s)", elapsed / 1000.0f);
+    }
+
+    void stop() override {
+        drive.stop();
+        armServo.detach();
+        gripperServo.detach();
+        servo3.detach();
+    }
+};
+
+
+// ============================================================
+// ROUTINE 5: DEAD-RECKONING CAD MEASUREMENT & PARK (35 Points)
+// Navigates the entire 12x12 ft arena using exact CAD dimensions
+// and closed-loop gyro turns:
+//   1. 300 mm (11.8 in) spur exit from Start Box
+//   2. Turn Left -90 deg onto East line
+//   3. 2000 mm (78.7 in) along East line
+//   4. Turn Left -90 deg onto North line
+//   5. 2000 mm (78.7 in) along North line
+//   6. Turn Left -90 deg onto West line
+//   7. 2000 mm (78.7 in) along West line
+//   8. Turn Left -90 deg into Park spur
+//   9. 350 mm (14.0 in) into 500x500 Park Zone
+// Line sensor is used as an optical arrival detector to lock
+// into the Park Zone when black is detected, or pure distance
+// if the sensor is uncalibrated or disconnected.
+// ============================================================
+
+class AutoMeasurementPark : public NRLOpMode {
+private:
+    uint32_t _startTime = 0;
+    uint32_t _parkConfirmStart = 0;
+    bool _parked = false;
+
+public:
+    void init() override {
+        leftMotor.begin();
+        rightMotor.begin();
+        armServo.begin();
+        gripperServo.begin();
+        servo3.begin();
+        line.begin();
+        line.autoFixCalibration();
+
+        armServo.setPosition(ARM_UP_ANGLE);
+        gripperServo.setPosition(GRIPPER_CLOSE_ANGLE);
+        servo3.setPosition(SERVO3_CLOSE_ANGLE);
+
+        // Reset gyro heading frame to zero
+        NRLComms::resetHeading();
+    }
+
+    void start() override {
+        _startTime = millis();
+        _parkConfirmStart = 0;
+        _parked = false;
+
+        runAction(driveActions.auto_()
+            .waitForHeadingReady()
+            .driveInches(11.8f)   // 1. Exit Start Box along 300 mm spur (5 pts)
+            .turn(-90.0f)         // 2. Turn Left 90 deg onto East line (North)
+            .driveInches(78.7f)   // 3. Drive 2000 mm along East line
+            .turn(-90.0f)         // 4. Turn Left 90 deg onto North line (West)
+            .driveInches(78.7f)   // 5. Drive 2000 mm along North line
+            .turn(-90.0f)         // 6. Turn Left 90 deg onto West line (South)
+            .driveInches(78.7f)   // 7. Drive 2000 mm along West line
+            .turn(-90.0f)         // 8. Turn Left 90 deg into Park spur (East)
+            .driveInches(15.0f)   // 9. Drive ~380 mm into Park Zone (30 pts)
+            .stopAll()
+            .build());
+    }
+
+    void loop() override {
+        uint32_t now = millis();
+        uint32_t elapsed = now - _startTime;
+
+        // Optical detector fallback: If nearing park (elapsed > 12s)
+        // and line sensor sees black Park Zone (count >= 5), stop immediately!
+        if (elapsed > 12000 && line.count() >= 5 && isActionRunning()) {
+            if (_parkConfirmStart == 0) {
+                _parkConfirmStart = now;
+            } else if (now - _parkConfirmStart > 180) {
+                cancelActions();
+                drive.stop();
+                _parked = true;
+            }
+        }
+
+        bool active = isActionRunning() && !_parked;
+        telemetry.addData("Mission", "MEASURE PARK (35P)");
+        telemetry.addData("Status", active ? "NAVIGATING" : "PARKED (35P)");
+        telemetry.addData("Heading", NRLComms::getHeading());
+        telemetry.addData("Line Count", line.count());
+        telemetry.addData("Time (s)", elapsed / 1000.0f);
+    }
+
+    void stop() override {
+        cancelActions();
+        drive.stop();
+        armServo.detach();
+        gripperServo.detach();
+        servo3.detach();
+    }
+};
+
+
+// ============================================================
 // PART 4: REGISTER THE AUTONOMOUS OPMODES ON CONTROLLER
 // ============================================================
-REGISTER_OPMODE(AutoGoldFromBox,  "AUTO: GOLD (BOX START)",  AUTO);
-REGISTER_OPMODE(AutoGoldFromLine, "AUTO: GOLD (LINE START)", AUTO);
-REGISTER_OPMODE(AutoTourPark,     "AUTO: TOUR & PARK",       AUTO);
+REGISTER_OPMODE(AutoDirectLineFollow, "AUTO: DIRECT LINE (35P)", AUTO);
+REGISTER_OPMODE(AutoMeasurementPark,  "AUTO: MEASURE PARK (35P)", AUTO);
+REGISTER_OPMODE(AutoGoldFromBox,      "AUTO: GOLD (BOX START)",  AUTO);
+REGISTER_OPMODE(AutoGoldFromLine,     "AUTO: GOLD (LINE START)", AUTO);
+REGISTER_OPMODE(AutoTourPark,         "AUTO: TOUR & PARK",       AUTO);

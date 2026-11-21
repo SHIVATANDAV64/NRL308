@@ -451,12 +451,12 @@ public:
      * this sets calMax to 4095 and restores full sensitivity on that channel.
      */
     void autoFixCalibration() {
-        static const uint16_t defWhite[HEXA_LINE_CHANNELS] = { 3820, 3720, 3640, 3560, 3480, 3410, 3360, 3360 };
+        static const uint16_t defWhite[HEXA_LINE_CHANNELS] = { 3920, 3800, 3700, 3600, 3500, 3450, 3400, 3400 };
         for (uint8_t i = 0; i < HEXA_LINE_CHANNELS; ++i) {
-            if (m_calMin[i] == 0 || m_calMin[i] > 4000) {
+            if (m_calMin[i] == 0 || m_calMin[i] >= 4085) {
                 m_calMin[i] = defWhite[i];
             }
-            if (m_calMax[i] <= m_calMin[i] + 50 || m_calMax[i] < 4000) {
+            if (m_calMax[i] <= m_calMin[i] + 25 || m_calMax[i] < 4000) {
                 m_calMax[i] = 4095;
             }
         }

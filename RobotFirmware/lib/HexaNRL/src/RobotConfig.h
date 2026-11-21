@@ -51,10 +51,10 @@ inline HexaLineArrayConfig hexaLineConfig() {
     cfg.selPins[1] = LINE_SEL_1;
     cfg.selPins[2] = LINE_SEL_2;
     cfg.sigPin = LINE_SIG;
-    cfg.darkThreshold = 220;
-    cfg.weightThreshold = 220;
-    cfg.minSpan = 25;
-    cfg.weakSpan = 60;
+    cfg.darkThreshold = 180;
+    cfg.weightThreshold = 180;
+    cfg.minSpan = 20;
+    cfg.weakSpan = 50;
     return cfg;
 }
 

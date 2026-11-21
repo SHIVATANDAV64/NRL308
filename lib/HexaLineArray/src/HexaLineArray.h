@@ -445,6 +445,24 @@ public:
         m_calibrated = true;
     }
 
+    /**
+     * Auto-fixes calibration if any channel missed the black tape or if uncalibrated.
+     * True infrared black is always ~4095 counts. If calMax was captured over white (span < 50),
+     * this sets calMax to 4095 and restores full sensitivity on that channel.
+     */
+    void autoFixCalibration() {
+        static const uint16_t defWhite[HEXA_LINE_CHANNELS] = { 3820, 3720, 3640, 3560, 3480, 3410, 3360, 3360 };
+        for (uint8_t i = 0; i < HEXA_LINE_CHANNELS; ++i) {
+            if (m_calMin[i] == 0 || m_calMin[i] > 4000) {
+                m_calMin[i] = defWhite[i];
+            }
+            if (m_calMax[i] <= m_calMin[i] + 50 || m_calMax[i] < 4000) {
+                m_calMax[i] = 4095;
+            }
+        }
+        m_calibrated = true;
+    }
+
 private:
     HexaLineArrayConfig m_cfg;
 

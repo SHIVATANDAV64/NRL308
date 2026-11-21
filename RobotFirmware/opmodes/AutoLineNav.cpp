@@ -55,37 +55,27 @@ static TankDrive drive { leftMotor, rightMotor };
 // 8-channel Arc IR Line Array on DIGITAL_PORT_1 & 2
 static HexaLineArray line { hexaLineConfig() };
 
-// Tuned line parameters for Team 308 on 2026 HYPERDRIVE Arena
+// Tuned line parameters for Team 308 on 2026 HYPERDRIVE Arena (12x12 ft)
 static LineTuning team308LineTuning() {
     LineTuning t;
-    t.pid.kP          = 0.45f;   // Steering strength on 25 mm tape
+    t.pid.kP          = 0.55f;   // Responsive steering to stay centered on 25 mm tape
     t.pid.kI          = 0.00f;   // Always 0 for line following
-    t.pid.kD          = 0.04f;   // Damping to eliminate wobble
-    t.followSpeed     = 0.35f;   // Base forward cruise speed
+    t.pid.kD          = 0.05f;   // Damping to prevent wobble
+    t.followSpeed     = 0.32f;   // Smooth, controlled forward cruise
     t.junctionSpeed   = 0.25f;   // Safe crossing speed at branches
-    t.pivotMs         = 60;      // Pivot duration to center chassis over junction
-    t.pivotSpeed      = 0.25f;   // Turn speed during 90-deg and 180-deg turns
-    t.eventThreshold  = 400;     // Lowered to 400 so weak channels (Ch0) reliably trigger events
-    t.startTimeoutMs  = 6000;    // 6 seconds to clear start box without early timeout
+    t.speedDrop       = 0.35f;   // Reduced speed drop so robot maintains smooth momentum
+    t.minSpeedFrac    = 0.50f;   // Never drops below 50% cruise speed
+    t.pivotMs         = 70;      // Pivot duration to center chassis over 500 mm terminal spurs
+    t.pivotSpeed      = 0.25f;   // Pivot speed for 90-deg and 180-deg turns
+    t.straightMs      = 250;     // Forward drive to cross junction tapes cleanly
+    t.eventThreshold  = 400;     // 400 = robust branch detection even with elevated Ch 0
+    t.startTimeoutMs  = 6000;    // 6 seconds to clear start box
     t.boxLeaveTicks   = 2;       // Confirmed ticks for box exit
     t.endConfirmTicks = 3;       // Confirmed ticks for end of line
     return t;
 }
 
 static LineActions lineActions { drive, line, team308LineTuning() };
-
-// Fallback calibration: if controller LINE TEST wasn't run, load empirical baseline
-// so the robot NEVER aborts with NOT_CALIBRATED
-static void ensureLineCalibration() {
-    if (!line.isCalibrated()) {
-        // Measured baseline for elevated/tilted Arc-8 on Team 308
-        // White floor readings: Ch0=3850, Ch1=3720, Ch2=3640, Ch3=3560, Ch4=3480, Ch5=3410, Ch6=3360, Ch7=3360
-        // Black tape readings: 4095
-        static const uint16_t whiteCal[8] = { 3850, 3720, 3640, 3560, 3480, 3410, 3360, 3360 };
-        static const uint16_t blackCal[8] = { 4095, 4095, 4095, 4095, 4095, 4095, 4095, 4095 };
-        line.setCalibration(whiteCal, blackCal);
-    }
-}
 
 
 // ============================================================
@@ -103,7 +93,7 @@ constexpr float SERVO3_CLOSE_ANGLE  = 50.0f;   // Closed auxiliary servo
 // PART 3: MECHANISM ACTION HELPERS (Pick-Up & Drop)
 // ============================================================
 
-// Collects a CORE ring at the end bar of a Pick-Up terminal
+// Collects a CORE ring at the 150 mm end bar of a Pick-Up terminal
 static ActionPtr pickUpCoreAction() {
     return sequential({
         instant([]{
@@ -143,13 +133,27 @@ static ActionPtr dropCoreAction() {
 
 
 // ============================================================
-// ROUTINE 1: GOLD MISSION FROM LINE (RECOMMENDED - 65 Points)
-// Placement: Place robot directly on the East line facing NORTH
-// (just in front of the Start Box spur).
-// Collects P3 Gold CORE (25 pts drop + 5 pts pick) -> Drops D2 -> Parks (30 pts)
+// ROUTINE 1: OFFICIAL MATCH RUN — GOLD MISSION FROM START ZONE (65 Pts)
+// Arena Setup: Place robot completely inside the START ZONE (bottom-right 500x500 box),
+// facing EAST (pointing toward the East line).
+// Strategy:
+//   1. Exits Start Zone along 300 mm spur (5 pts)
+//   2. Turns LEFT onto East main line (heading North)
+//   3. Passes P1 (Red), D1 (Drop), P2 (Red)
+//   4. Turns LEFT at top-right corner onto North line (heading West)
+//   5. Turns RIGHT onto P3, follows 500 mm, grabs Gold CORE (5 pts)
+//   6. 180 U-turn back to North line, resumes West
+//   7. Turns LEFT onto D2, follows 500 mm into central DROP ZONE, releases Gold CORE (25 pts)
+//   8. 180 U-turn back to North line, resumes West
+//   9. Passes P4 (Gold)
+//  10. Turns LEFT at top-left corner onto West main line (heading South)
+//  11. Passes P5 (Blue), D3 (Drop), P6 (Blue)
+//  12. Turns LEFT at bottom-left corner into 300 mm PARK spur
+//  13. Arrives in 500x500 PARK ZONE, stops completely (30 pts)
+// Total Score: 65 Points
 // ============================================================
 
-class AutoGoldFromLine : public NRLOpMode {
+class AutoGoldFromBox : public NRLOpMode {
 public:
     void init() override {
         leftMotor.begin();
@@ -158,7 +162,7 @@ public:
         gripperServo.begin();
         servo3.begin();
         line.begin();
-        ensureLineCalibration();
+        line.autoFixCalibration();
 
         armServo.setPosition(ARM_UP_ANGLE);
         gripperServo.setPosition(GRIPPER_CLOSE_ANGLE);
@@ -166,46 +170,48 @@ public:
     }
 
     void start() override {
-        // Navigation starts on East line heading NORTH:
         runAction(lineActions.auto_()
-            .followToJunction(LineSide::RIGHT, 1)         // 1. Pass P1 (Red Pick on East line)
+            .leaveBox()                                   // 1. Exit Start Box along 300 mm spur (5 pts)
+            .followToJunction(LineSide::LEFT, 1)          // 2. Reach junction with East line
+            .left()                                       // 3. Turn LEFT 90 deg onto East line (heading North)
+            .followToJunction(LineSide::RIGHT, 1)         // 4. Pass P1 (Red Pick on right)
             .straight()
-            .followToJunction(LineSide::LEFT, 1)          // 2. Pass D1 (Drop on East line)
+            .followToJunction(LineSide::LEFT, 1)          // 5. Pass D1 (Drop on left)
             .straight()
-            .followToJunction(LineSide::RIGHT, 1)         // 3. Pass P2 (Red Pick on East line)
+            .followToJunction(LineSide::RIGHT, 1)         // 6. Pass P2 (Red Pick on right)
             .straight()
             // Top-right corner: automatically turns 90 deg LEFT onto North line (heading West)
-            .followToJunction(LineSide::RIGHT, 1)         // 4. Stop at P3 (Gold CORE terminal)
-            .right()                                      // Turn onto P3 spur
-            .followToEnd()                                // Follow ~500mm to end bar
-            .then(pickUpCoreAction())                     // 5. Grab Gold CORE!
-            .uTurn()                                      // Turn 180 back toward North line
+            .followToJunction(LineSide::RIGHT, 1)         // 7. Stop at P3 (Gold CORE terminal)
+            .right()                                      // Turn onto P3
+            .followToEnd()                                // Follow 500 mm to 150 mm end bar
+            .then(pickUpCoreAction())                     // 8. Grab Gold CORE! (5 pts)
+            .uTurn()                                      // 180 U-turn back to North line
             .followToJunction()                           // Back to junction
             .right()                                      // Facing South, turn right onto North line (heading West)
-            .followToJunction(LineSide::LEFT, 1)          // 6. Stop at D2 (Drop terminal)
-            .left()                                       // Turn inward to D2
-            .followToEnd()                                // Follow ~500mm into central Drop Zone
-            .then(dropCoreAction())                       // 7. Release Gold CORE into Drop Zone!
-            .uTurn()                                      // Turn 180 back toward North line
+            .followToJunction(LineSide::LEFT, 1)          // 9. Stop at D2 (Drop terminal)
+            .left()                                       // Turn left into Drop Zone
+            .followToEnd()                                // Follow 500 mm to end bar
+            .then(dropCoreAction())                       // 10. Release Gold CORE into DROP ZONE! (25 pts)
+            .uTurn()                                      // 180 U-turn back to North line
             .followToJunction()                           // Back to junction
             .left()                                       // Facing North, turn left onto North line (heading West)
-            .followToJunction(LineSide::RIGHT, 1)         // 8. Pass P4 (Gold Pick 2 on North line)
+            .followToJunction(LineSide::RIGHT, 1)         // 11. Pass P4 (Gold Pick 2 on right)
             .straight()
             // Top-left corner: automatically turns 90 deg LEFT onto West line (heading South)
-            .followToJunction(LineSide::RIGHT, 1)         // 9. Pass P5 (Blue Pick 1 on West line)
+            .followToJunction(LineSide::RIGHT, 1)         // 12. Pass P5 (Blue Pick on right)
             .straight()
-            .followToJunction(LineSide::LEFT, 1)          // 10. Pass D3 (Drop on West line)
+            .followToJunction(LineSide::LEFT, 1)          // 13. Pass D3 (Drop on left)
             .straight()
-            .followToJunction(LineSide::RIGHT, 1)         // 11. Pass P6 (Blue Pick 2 on West line)
+            .followToJunction(LineSide::RIGHT, 1)         // 14. Pass P6 (Blue Pick on right)
             .straight()
-            // Bottom-left corner: line turns LEFT (East) toward Park Zone
-            .followToBox()                                // 12. Arrive at Park Zone (all 8 channels dark)
-            .park(350)                                    // 13. Drive 350ms into box and brake (30 pts)!
+            // Bottom-left corner: line turns LEFT (East) into 300 mm spur leading to Park Zone
+            .followToBox()                                // 15. Arrive at 500x500 Park Zone
+            .park(350)                                    // 16. Stop completely on black square (30 pts)!
             .build());
     }
 
     void loop() override {
-        telemetry.addData("Mission", "GOLD FROM LINE (65P)");
+        telemetry.addData("Mission", "GOLD BOX START (65P)");
         const char* st = isActionRunning() ? "RUNNING" :
                          (lineActions.fault() != LineFault::NONE ? "FAULT" : "FINISHED/PARKED");
         telemetry.addData("Status", st);
@@ -227,13 +233,12 @@ public:
 
 
 // ============================================================
-// ROUTINE 2: GOLD MISSION FROM START BOX (65 Points)
-// Placement: Place robot inside the Right Black Box facing EAST.
-// The robot drives East out of the box, turns LEFT onto East line,
-// and executes the full Gold mission.
+// ROUTINE 2: PRACTICE RUN — GOLD MISSION FROM LINE (65 Pts)
+// Arena Setup: Place robot directly on the East line facing NORTH
+// (just ahead of the Start Box spur).
 // ============================================================
 
-class AutoGoldFromBox : public NRLOpMode {
+class AutoGoldFromLine : public NRLOpMode {
 public:
     void init() override {
         leftMotor.begin();
@@ -242,7 +247,7 @@ public:
         gripperServo.begin();
         servo3.begin();
         line.begin();
-        ensureLineCalibration();
+        line.autoFixCalibration();
 
         armServo.setPosition(ARM_UP_ANGLE);
         gripperServo.setPosition(GRIPPER_CLOSE_ANGLE);
@@ -251,47 +256,44 @@ public:
 
     void start() override {
         runAction(lineActions.auto_()
-            .leaveBox()                                   // 1. Exit Start Box onto East horizontal spur
-            .followToJunction(LineSide::LEFT, 1)          // 2. Reach junction with East vertical line
-            .left()                                       // 3. Turn LEFT 90 deg onto East line (heading North)
-            .followToJunction(LineSide::RIGHT, 1)         // 4. Pass P1
+            .followToJunction(LineSide::RIGHT, 1)         // 1. Pass P1
             .straight()
-            .followToJunction(LineSide::LEFT, 1)          // 5. Pass D1
+            .followToJunction(LineSide::LEFT, 1)          // 2. Pass D1
             .straight()
-            .followToJunction(LineSide::RIGHT, 1)         // 6. Pass P2
+            .followToJunction(LineSide::RIGHT, 1)         // 3. Pass P2
             .straight()
-            // Top-right corner: turns 90 deg LEFT onto North line (heading West)
-            .followToJunction(LineSide::RIGHT, 1)         // 7. Stop at P3 (Gold CORE terminal)
-            .right()                                      // Turn onto P3
+            // Top-right corner: turns 90 deg LEFT onto North line
+            .followToJunction(LineSide::RIGHT, 1)         // 4. Stop at P3
+            .right()
             .followToEnd()
-            .then(pickUpCoreAction())                     // 8. Grab Gold CORE!
+            .then(pickUpCoreAction())                     // 5. Grab Gold CORE!
             .uTurn()
             .followToJunction()
-            .right()                                      // Turn right onto North line (heading West)
-            .followToJunction(LineSide::LEFT, 1)          // 9. Stop at D2
+            .right()                                      // Heading West on North line
+            .followToJunction(LineSide::LEFT, 1)          // 6. Stop at D2
             .left()
             .followToEnd()
-            .then(dropCoreAction())                       // 10. Deposit Gold CORE!
+            .then(dropCoreAction())                       // 7. Deposit Gold CORE into Drop Zone!
             .uTurn()
             .followToJunction()
-            .left()                                       // Turn left onto North line (heading West)
-            .followToJunction(LineSide::RIGHT, 1)         // 11. Pass P4
+            .left()                                       // Heading West on North line
+            .followToJunction(LineSide::RIGHT, 1)         // 8. Pass P4
             .straight()
-            // Top-left corner: turns 90 deg LEFT onto West line (heading South)
-            .followToJunction(LineSide::RIGHT, 1)         // 12. Pass P5
+            // Top-left corner: turns 90 deg LEFT onto West line
+            .followToJunction(LineSide::RIGHT, 1)         // 9. Pass P5
             .straight()
-            .followToJunction(LineSide::LEFT, 1)          // 13. Pass D3
+            .followToJunction(LineSide::LEFT, 1)          // 10. Pass D3
             .straight()
-            .followToJunction(LineSide::RIGHT, 1)         // 14. Pass P6
+            .followToJunction(LineSide::RIGHT, 1)         // 11. Pass P6
             .straight()
-            // Bottom-left corner: turns LEFT into Park Zone
-            .followToBox()                                // 15. Arrive at Park Zone
-            .park(350)                                    // 16. Park safely (30 pts)!
+            // Bottom-left corner: turns into Park Zone
+            .followToBox()
+            .park(350)                                    // 12. Park safely (30 pts)!
             .build());
     }
 
     void loop() override {
-        telemetry.addData("Mission", "GOLD FROM BOX (65P)");
+        telemetry.addData("Mission", "GOLD LINE START (65P)");
         const char* st = isActionRunning() ? "RUNNING" :
                          (lineActions.fault() != LineFault::NONE ? "FAULT" : "FINISHED/PARKED");
         telemetry.addData("Status", st);
@@ -314,7 +316,7 @@ public:
 
 // ============================================================
 // ROUTINE 3: SAFE TOUR & PARK (Guaranteed Baseline - 35 Points)
-// Starts from East line facing North, tours perimeter, and parks.
+// Starts inside START ZONE facing East, tours perimeter, and parks.
 // ============================================================
 
 class AutoTourPark : public NRLOpMode {
@@ -326,7 +328,7 @@ public:
         gripperServo.begin();
         servo3.begin();
         line.begin();
-        ensureLineCalibration();
+        line.autoFixCalibration();
 
         armServo.setPosition(ARM_UP_ANGLE);
         gripperServo.setPosition(GRIPPER_CLOSE_ANGLE);
@@ -335,9 +337,11 @@ public:
 
     void start() override {
         runAction(lineActions.auto_()
-            // Follow full perimeter loop passing all junctions to Park Zone
-            .followToBox()                                // Follow around arena to Park Zone
-            .park(350)                                    // Stop on Park Zone (30 pts + tour)
+            .leaveBox()                                   // Exit Start Zone (5 pts)
+            .followToJunction(LineSide::LEFT, 1)          // Reach East line
+            .left()                                       // Turn Left onto East line (North)
+            .followToBox()                                // Follow perimeter to Park Zone
+            .park(350)                                    // Stop on Park Zone (30 pts)
             .build());
     }
 
@@ -366,6 +370,6 @@ public:
 // ============================================================
 // PART 4: REGISTER THE AUTONOMOUS OPMODES ON CONTROLLER
 // ============================================================
-REGISTER_OPMODE(AutoGoldFromLine, "AUTO: GOLD LINE START", AUTO);
-REGISTER_OPMODE(AutoGoldFromBox,  "AUTO: GOLD BOX START",  AUTO);
-REGISTER_OPMODE(AutoTourPark,     "AUTO: TOUR & PARK",     AUTO);
+REGISTER_OPMODE(AutoGoldFromBox,  "AUTO: GOLD (BOX START)",  AUTO);
+REGISTER_OPMODE(AutoGoldFromLine, "AUTO: GOLD (LINE START)", AUTO);
+REGISTER_OPMODE(AutoTourPark,     "AUTO: TOUR & PARK",       AUTO);

@@ -1,68 +1,75 @@
 #include "NRL.h"
 
 // ============================================================
-// LINE SENSOR HARDWARE DIAGNOSTIC OPMODE (Team 308)
-// Use this to check raw ADC counts, wiring, and emitters.
+// LINE SENSOR HARDWARE DIAGNOSTIC OPMODE
+// Displays real-time raw ADC counts, normalized (0..1000) levels,
+// visual sensor bar, line position, error, and calibration health.
 // ============================================================
 
 static HexaLineArray line { hexaLineConfig() };
 
 class LineSensorDiagnostic : public NRLOpMode {
-
 public:
     void init() override {
         line.begin();
+        // Auto-fix any channel that missed black or was uncalibrated
+        line.autoFixCalibration();
     }
 
     void loop() override {
-        // Read raw ADC counts (0..4095) across all 8 channels:
-        // Healthy White floor: ~300 - 1500
-        // Healthy Black tape:  ~3500 - 4095
-        uint16_t r0 = line.readRaw(0);
-        uint16_t r1 = line.readRaw(1);
-        uint16_t r2 = line.readRaw(2);
-        uint16_t r3 = line.readRaw(3);
-        uint16_t r4 = line.readRaw(4);
-        uint16_t r5 = line.readRaw(5);
-        uint16_t r6 = line.readRaw(6);
-        uint16_t r7 = line.readRaw(7);
+        // Read raw ADC counts (0..4095)
+        uint16_t r[8];
+        uint16_t n[8];
+        char bar[11] = "[........]";
 
-        String s01 = String(r0) + " | " + String(r1);
-        String s23 = String(r2) + " | " + String(r3);
-        String s45 = String(r4) + " | " + String(r5);
-        String s67 = String(r6) + " | " + String(r7);
-
-        // Display on Controller Telemetry:
-        telemetry.addData("Calibrated", line.isCalibrated() ? "YES" : "NO");
-        telemetry.addData("Ch 0-1", s01.c_str());
-        telemetry.addData("Ch 2-3", s23.c_str());
-        telemetry.addData("Ch 4-5", s45.c_str());
-        telemetry.addData("Ch 6-7", s67.c_str());
-
-        // Diagnose common hardware issues:
-        bool allZero = (r0 < 50 && r3 < 50 && r7 < 50);
-        bool allMax  = (r0 > 4050 && r3 > 4050 && r7 > 4050);
-
-        if (allZero) {
-            telemetry.addData("DIAG", "NO SIGNAL / POWER OFF (Check 5V & SIG)");
-        } else if (allMax) {
-            telemetry.addData("DIAG", "ADC FLOATING / BLACK (Check height or SIG)");
-        } else {
-            telemetry.addData("DIAG", "ADC ACTIVE (Slide over black line to test)");
+        uint8_t m = line.mask();
+        for (int i = 0; i < 8; ++i) {
+            r[i] = line.readRaw(i);
+            n[i] = line.read(i);
+            if (m & (1 << i)) {
+                bar[i + 1] = '#';  // Detected line
+            }
         }
 
-        // Print to Serial Monitor at 115200 baud:
+        // Live visual bar and pattern:
+        telemetry.addData("Bar", bar);
+        telemetry.addData("Pattern", linePatternName(line.pattern()));
+        telemetry.addData("Position", line.position());
+        telemetry.addData("Error", line.error());
+
+        // Normalized readings (0 = pure white, 1000 = pure black):
+        char normStr1[32];
+        char normStr2[32];
+        snprintf(normStr1, sizeof(normStr1), "N 0-3: %3u %3u %3u %3u", n[0], n[1], n[2], n[3]);
+        snprintf(normStr2, sizeof(normStr2), "N 4-7: %3u %3u %3u %3u", n[4], n[5], n[6], n[7]);
+        telemetry.addData("Norm 0-3", normStr1);
+        telemetry.addData("Norm 4-7", normStr2);
+
+        // Raw ADC counts (0..4095):
+        char rawStr1[32];
+        char rawStr2[32];
+        snprintf(rawStr1, sizeof(rawStr1), "%4u|%4u|%4u|%4u", r[0], r[1], r[2], r[3]);
+        snprintf(rawStr2, sizeof(rawStr2), "%4u|%4u|%4u|%4u", r[4], r[5], r[6], r[7]);
+        telemetry.addData("Raw 0-3", rawStr1);
+        telemetry.addData("Raw 4-7", rawStr2);
+
+        // Button A: force recalibration baseline
+        if (gamepad1.justPressed(BTN_A)) {
+            line.autoFixCalibration();
+        }
+
+        // Serial logging at 4 Hz
         static uint32_t lastPrint = 0;
         if (millis() - lastPrint > 250) {
             lastPrint = millis();
-            Serial.printf("[LINE RAW 308] C0:%-4u C1:%-4u C2:%-4u C3:%-4u C4:%-4u C5:%-4u C6:%-4u C7:%-4u\n",
-                          r0, r1, r2, r3, r4, r5, r6, r7);
+            Serial.printf("[LINE] Bar:%s Pos:%-5d Err:%-5d | Raw: %4u %4u %4u %4u %4u %4u %4u %4u\n",
+                          bar, line.position(), line.error(),
+                          r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
         }
     }
 
-    void stop() override {
-    }
+    void stop() override {}
 };
 
-// Registered on Controller TELEOP menu for easy access
+// Registered on Controller TELEOP menu
 REGISTER_OPMODE(LineSensorDiagnostic, "DIAG: LINE SENSOR", TELEOP);

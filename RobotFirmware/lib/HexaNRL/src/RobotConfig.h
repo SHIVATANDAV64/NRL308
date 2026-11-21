@@ -46,8 +46,16 @@ inline HexaIMUConfig hexaImuConfig() {
 // For a sensor bar whose channel 0 is the RIGHT-most sensor, edit a copy first:
 //     HexaLineArrayConfig cfg = hexaLineConfig(); cfg.reversed = true;
 inline HexaLineArrayConfig hexaLineConfig() {
-    return HexaLineArrayConfig{ .selPins = { LINE_SEL_0, LINE_SEL_1, LINE_SEL_2 },
-                                .sigPin  = LINE_SIG };
+    HexaLineArrayConfig cfg;
+    cfg.selPins[0] = LINE_SEL_0;
+    cfg.selPins[1] = LINE_SEL_1;
+    cfg.selPins[2] = LINE_SEL_2;
+    cfg.sigPin = LINE_SIG;
+    cfg.darkThreshold = 220;
+    cfg.weightThreshold = 220;
+    cfg.minSpan = 25;
+    cfg.weakSpan = 60;
+    return cfg;
 }
 
 extern HexaOLED           botOled;       // SSD1306 128×64 — used by pairing UI (do not rename)

@@ -185,23 +185,23 @@ struct HexaLineArrayConfig {
 
     /// Normalized value at or above which a channel counts as "on the line".
     /// Used by mask(), count(), onLine() and pattern().
-    uint16_t darkThreshold = 250;
+    uint16_t darkThreshold = 220;
 
     /// Normalized value at or above which a channel contributes to the
     /// position() centroid. Kept EQUAL to darkThreshold: a lower weight
     /// threshold sounds like it should smooth the centroid at the line edges,
     /// but in practice it lets near-background channels drag the centroid
     /// toward the middle of the array.
-    uint16_t weightThreshold = 250;
+    uint16_t weightThreshold = 220;
 
     /// A calibrated channel whose max-min span is below this is treated as
-    /// dead (forced to 0). Catches broken emitters, and a capture step that
-    /// was done over the wrong surface.
-    uint16_t minSpan = 100;
+    /// dead (forced to 0). Lowered to 25 to accommodate elevated/tilted Arc-8 sensors
+    /// where edge channels (e.g. Ch 0) exhibit spans as low as 40-90 counts.
+    uint16_t minSpan = 25;
 
     /// Span below this is usable but poor — worth flagging on screen so a
     /// marginal channel is visible before it causes a mystery on the track.
-    uint16_t weakSpan = 200;
+    uint16_t weakSpan = 60;
 
     /// How long the line may be missing before lost() latches true and
     /// position() returns -1. Below this the array reports an extreme
@@ -432,6 +432,18 @@ public:
 
     /** Read-only access to the active configuration. */
     const HexaLineArrayConfig& config() const { return m_cfg; }
+
+    /**
+     * Manually supply calibration values (fallback baseline when uncalibrated)
+     * so autonomous runs are never blocked by NOT_CALIBRATED.
+     */
+    void setCalibration(const uint16_t white[HEXA_LINE_CHANNELS], const uint16_t black[HEXA_LINE_CHANNELS]) {
+        for (uint8_t i = 0; i < HEXA_LINE_CHANNELS; ++i) {
+            m_calMin[i] = white[i];
+            m_calMax[i] = black[i];
+        }
+        m_calibrated = true;
+    }
 
 private:
     HexaLineArrayConfig m_cfg;

@@ -568,7 +568,7 @@ public:
             .turn(-90.0f)         // 6. Turn Left 90 deg onto West line (South)
             .driveInches(78.7f)   // 7. Drive 2000 mm along West line
             .turn(-90.0f)         // 8. Turn Left 90 deg into Park spur (East)
-            .driveInches(15.0f)   // 9. Drive ~380 mm into Park Zone (30 pts)
+            .driveInches(18.0f)   // 9. Drive ~450 mm into Park Zone (30 pts)
             .stopAll()
             .build());
     }
@@ -610,8 +610,8 @@ public:
 // ============================================================
 // PART 4: REGISTER THE AUTONOMOUS OPMODES ON CONTROLLER
 // ============================================================
-REGISTER_OPMODE(AutoDirectLineFollow, "AUTO: DIRECT LINE (35P)", AUTO);
 REGISTER_OPMODE(AutoMeasurementPark,  "AUTO: MEASURE PARK (35P)", AUTO);
+REGISTER_OPMODE(AutoDirectLineFollow, "AUTO: DIRECT LINE (35P)", AUTO);
 REGISTER_OPMODE(AutoGoldFromBox,      "AUTO: GOLD (BOX START)",  AUTO);
 REGISTER_OPMODE(AutoGoldFromLine,     "AUTO: GOLD (LINE START)", AUTO);
 REGISTER_OPMODE(AutoTourPark,         "AUTO: TOUR & PARK",       AUTO);
